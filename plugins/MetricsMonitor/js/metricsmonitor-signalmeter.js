@@ -755,8 +755,8 @@ document.head.appendChild(style);
       stereoGroup.classList.add('stereo-group');
 
       const stereoScale = ['+5', '0', '-5', '-10', '-15', '-20', '-26'];
-      createLevelMeter(state.ids.left,  'LEFT',  'dB', stereoGroup, stereoScale);
-      createLevelMeter(state.ids.right, 'RIGHT', 'dB', stereoGroup, []);
+      createLevelMeter(state.ids.left,  typeof t === 'function' ? t('plugin.metricsMonitor.left') : 'LEFT',  'dB', stereoGroup, stereoScale);
+      createLevelMeter(state.ids.right, typeof t === 'function' ? t('plugin.metricsMonitor.right') : 'RIGHT', 'dB', stereoGroup, []);
       root.appendChild(stereoGroup);
 
       // ACI Meter (Unique ID used here to avoid conflicts)

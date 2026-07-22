@@ -253,7 +253,7 @@ function createScopeInstance(containerId = "level-meter-container", options = {}
   `;
   const scopeLabel = document.createElement("div");
   scopeLabel.id = `mpx-scope-label-${instanceKey}`;
-  scopeLabel.innerText = "Oscilloscope";
+  scopeLabel.innerText = typeof t === 'function' ? t('plugin.metricsMonitor.oscilloscope') : 'Oscilloscope';
   scopeLabel.style.cssText = "cursor: pointer; transition: color 0.3s ease;";
 
   const waveformLabel = document.createElement("div");
@@ -670,7 +670,7 @@ function createScopeInstance(containerId = "level-meter-container", options = {}
           ctx.font = "italic 14px Arial";
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText("Waiting for Data...", canvas.clientWidth / 2, canvas.clientHeight / 2);
+          ctx.fillText(typeof t === 'function' ? t('plugin.metricsMonitor.waitingForData') : 'Waiting for Data...', canvas.clientWidth / 2, canvas.clientHeight / 2);
           ctx.restore();
         }
     } else {
@@ -695,7 +695,7 @@ function createScopeInstance(containerId = "level-meter-container", options = {}
             ctx.font = "italic 14px Arial";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
-            ctx.fillText("Waiting for Data...", canvas.clientWidth / 2, canvas.clientHeight / 2);
+            ctx.fillText(typeof t === 'function' ? t('plugin.metricsMonitor.waitingForData') : 'Waiting for Data...', canvas.clientWidth / 2, canvas.clientHeight / 2);
             ctx.restore();
         }
     }

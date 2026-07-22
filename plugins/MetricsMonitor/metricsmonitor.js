@@ -505,7 +505,9 @@ function syncTextWebSocketMode(isInitial) {
     if (allowModuleToggle) {
       const customTooltip = document.createElement("div");
       const activeKeys = ACTIVE_SEQUENCE.map((val, index) => index + 1).join(",");
-      customTooltip.textContent = "Click here or press a number " + activeKeys + " to change the display mode.";
+      const clickHereText = typeof t === 'function' ? t('plugin.metricsMonitor.clickHereOrPressNumber') : 'Click here or press a number';
+      const toChangeModeText = typeof t === 'function' ? t('plugin.metricsMonitor.toChangeDisplayMode') : 'to change the display mode.';
+      customTooltip.textContent = clickHereText + " " + activeKeys + " " + toChangeModeText;
       customTooltip.style.cssText = `
         position: absolute;
         top: 50%;
@@ -641,7 +643,7 @@ function syncTextWebSocketMode(isInitial) {
       const observer = new MutationObserver(() => {
         if (typeof addIconToPluginPanel === "function") {
           observer.disconnect();
-          try { addIconToPluginPanel(buttonId, "MPX/Signal", "solid", "wave-square", "MPX/Signal"); functionFound = true; }
+          try { const mpxSignalLabel = typeof t === 'function' ? t('plugin.mpxSignal') : 'MPX/Signal'; addIconToPluginPanel(buttonId, mpxSignalLabel, "solid", "wave-square", mpxSignalLabel); functionFound = true; }
           catch (e) { mmLog("warn", "addIconToPluginPanel failed, using legacy button", e); }
         }
       });
@@ -1656,7 +1658,7 @@ function replaceMainCanvasWithScopeIfRequired(forceReinit = false) {
 
     const dbrHeading = document.createElement("h2");
     dbrHeading.className = "signal-heading mm-dbr-heading";
-    dbrHeading.textContent = "POWER";
+    dbrHeading.textContent = typeof t === 'function' ? t('plugin.metricsMonitor.power') : 'POWER';
     dbrHeading.style.fontSize = "25px";
     dbrHeading.style.marginBottom = "10px";
     dbrHeading.style.marginTop = "-6px";

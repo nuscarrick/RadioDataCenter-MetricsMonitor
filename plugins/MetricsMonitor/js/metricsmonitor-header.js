@@ -380,7 +380,7 @@ const PeakColorFixed = "rgb(251, 174, 38)";    // Do not touch - this value is a
     const stereoImg = document.createElement('img');
     stereoImg.className = 'status-icon';
     stereoImg.id = 'stereoIcon';
-    stereoImg.alt = 'Stereo';
+    stereoImg.alt = typeof t === 'function' ? t('menu.stereo') : 'Stereo';
     
     stereoImg.style.cursor = 'pointer';
     stereoImg.style.pointerEvents = 'auto'; 

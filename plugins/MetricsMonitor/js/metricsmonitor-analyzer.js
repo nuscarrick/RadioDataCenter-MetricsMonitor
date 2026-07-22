@@ -214,7 +214,7 @@ function createAnalyzerInstance(containerId = "level-meter-container", options =
   // --- MODE LABEL (Bottom Left, non-clickable) ---
   const modeLabel = document.createElement("div");
   modeLabel.id = `mpx-mode-label-${instanceKey}`;
-  modeLabel.title = "Spectrum view";
+  modeLabel.title = typeof t === 'function' ? t('plugin.metricsMonitor.spectrumView') : 'Spectrum view';
   modeLabel.style.cssText = `
     position: absolute;
     bottom: ${embedded ? '15px' : '6px'};
@@ -227,10 +227,10 @@ function createAnalyzerInstance(containerId = "level-meter-container", options =
     user-select: none;
   `;
   modeLabel.innerText =
-    sampleRate === 48000 ? "FM Audio Spectrum"
-    : sampleRate === 96000 ? "FM Baseband Spectrum"
-    : sampleRate === 192000 ? "MPX Spectrum"
-    : "Spectrum Analyzer";
+    sampleRate === 48000 ? (typeof t === 'function' ? t('plugin.metricsMonitor.fmAudioSpectrum') : 'FM Audio Spectrum')
+    : sampleRate === 96000 ? (typeof t === 'function' ? t('plugin.metricsMonitor.fmBasebandSpectrum') : 'FM Baseband Spectrum')
+    : sampleRate === 192000 ? (typeof t === 'function' ? t('plugin.metricsMonitor.mpxSpectrum') : 'MPX Spectrum')
+    : (typeof t === 'function' ? t('plugin.metricsMonitor.spectrumAnalyzer') : 'Spectrum Analyzer');
   block.appendChild(modeLabel);
 
   const ctx = canvas.getContext("2d");
@@ -896,7 +896,7 @@ function createAnalyzerInstance(containerId = "level-meter-container", options =
         ctx.font = "italic 14px Arial";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText("Waiting for Data...", logicalWidth / 2, logicalHeight / 2);
+        ctx.fillText(typeof t === 'function' ? t('plugin.metricsMonitor.waitingForData') : 'Waiting for Data...', logicalWidth / 2, logicalHeight / 2);
         ctx.restore();
     }
 
