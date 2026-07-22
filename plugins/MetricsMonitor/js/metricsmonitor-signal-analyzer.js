@@ -640,7 +640,7 @@ const MeterTiltCalibration = -900;    // Do not touch - this value is automatica
         type: 'line',
         data: {
           datasets: [{
-            label: 'Signal',
+            label: typeof t === 'function' ? t('plugin.metricsMonitor.signal') : 'Signal',
             data: this.hub.data,
             parsing: { yAxisKey: 'y', xAxisKey: 'x' },
 

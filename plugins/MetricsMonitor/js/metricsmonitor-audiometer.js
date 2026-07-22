@@ -763,8 +763,8 @@ function initAudioMeter(containerOrId = "level-meter-container") {
     "-26 dB"
   ];
   
-  createLevelMeter("eq-left-meter", "LEFT", stereoGroup, stereoScale);
-  createLevelMeter("eq-right-meter", "RIGHT", stereoGroup, []);
+  createLevelMeter("eq-left-meter", typeof t === 'function' ? t('plugin.metricsMonitor.left') : 'LEFT', stereoGroup, stereoScale);
+  createLevelMeter("eq-right-meter", typeof t === 'function' ? t('plugin.metricsMonitor.right') : 'RIGHT', stereoGroup, []);
   
   signalMetersGroup.appendChild(stereoGroup);
 
@@ -785,7 +785,7 @@ function initAudioMeter(containerOrId = "level-meter-container") {
   eqHintWrapper.id = "eqHintWrapper";
   const eqHintText = document.createElement("div");
   eqHintText.id = "eqHintText";
-  eqHintText.innerText = "Click play to show";
+  eqHintText.innerText = typeof t === 'function' ? t('plugin.metricsMonitor.clickPlayToShow') : 'Click play to show';
   eqHintWrapper.style.top = "-5%";
   eqHintWrapper.style.left = "-10%";
   eqHintWrapper.appendChild(eqHintText);
