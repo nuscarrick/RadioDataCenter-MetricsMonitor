@@ -184,6 +184,44 @@ const MeterTiltCalibration = -900;    // Do not touch - this value is automatica
   };
   window.MetricsMonitor.onSignalUnitChange = function (fn) { if (typeof fn === "function") signalUnitListeners.push(fn); };
 
+  // ==========================================================
+  // Client-side MPX data-freshness watchdog
+  // ==========================================================
+  // The analyzer/scope canvases already show "Waiting for Data..." when
+  // their local frame buffer is empty, but that alone doesn't tell the
+  // viewer WHY — often it's their own network/wifi, not a server problem.
+  // Each module that receives MPX frames over its own WebSocket calls
+  // window.MetricsMonitor.reportMpxData() on every message; if none of
+  // them see a frame for a while (and MPX isn't just turned off), show a
+  // single toast suggesting a reload instead of leaving the viewer
+  // guessing at a blank/frozen chart.
+  const MPX_CLIENT_STALE_THRESHOLD_MS = 25000;
+  const MPX_CLIENT_CHECK_INTERVAL_MS = 10000;
+  let lastMpxClientDataTime = Date.now();
+  let mpxClientStaleToastShown = false;
+
+  window.MetricsMonitor.reportMpxData = function () {
+    lastMpxClientDataTime = Date.now();
+    mpxClientStaleToastShown = false;
+  };
+
+  setInterval(() => {
+    if (MPXmode === "off") return; // intentionally disabled — not a connection problem
+    if (mpxClientStaleToastShown) return;
+    if (Date.now() - lastMpxClientDataTime <= MPX_CLIENT_STALE_THRESHOLD_MS) return;
+
+    mpxClientStaleToastShown = true;
+    if (typeof sendToast === "function") {
+      sendToast(
+        "warning",
+        typeof t === "function" ? t("plugin.metricsMonitor.connectionIssueTitle") : "Connection issue",
+        typeof t === "function" ? t("plugin.metricsMonitor.connectionIssueMessage") : "MPX data isn't coming through — this is often a slow or unstable connection. Try reloading the page.",
+        false,
+        true
+      );
+    }
+  }, MPX_CLIENT_CHECK_INTERVAL_MS);
+
   function hookSignalUnitDropdown() {
     const input = document.getElementById("signal-selector-input");
     const options = document.querySelectorAll("#signal-selector .option");
