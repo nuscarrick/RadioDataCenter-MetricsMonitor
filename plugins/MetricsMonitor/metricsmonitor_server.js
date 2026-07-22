@@ -34,6 +34,7 @@ const dgram = require("dgram"); // Required for UDP communication
 // These paths assume the standard file structure of the FM-DX-Webserver
 const { logInfo, logError, logWarn } = require("./../../server/console");
 const mainConfig = require("./../../config.json");
+const { sendSlackNotification } = require("./../../server/helpers/slack_notifications");
 
 // ====================================================================================
 //  PLUGIN CONFIGURATION MANAGEMENT
@@ -1369,7 +1370,10 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
               if (!trimmed.startsWith('{')) return;
               
               const data = JSON.parse(trimmed);
-              
+
+              // MPX is producing data — mark liveness for the watchdog.
+              lastMpxLineTime = Date.now();
+
               if (typeof data.p === 'number') currentPilotPeak = data.p;
               if (typeof data.r === 'number') currentRdsPeak = data.r;
               if (typeof data.m === 'number') currentMaxPeak = data.m;
@@ -1393,6 +1397,7 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
   // ====================================================================================
   let rec = null;
   let targetDevice = "";
+  let lastMpxLineTime = Date.now(); // liveness marker for the MPX data watchdog
 
   /* ============================
      RECONNECT / RETRY STATE
@@ -1524,6 +1529,131 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
 
   // Initial start
   startMPXCapture();
+
+  // ====================================================================================
+  //  MPX DATA WATCHDOG — detect "waiting for data…" and self-heal
+  // ====================================================================================
+  // Flow (per the MPX reboot/alert spec):
+  //   • MPXmode = "off"        → alert once to #rpi-reboot-logs (enable MPX). No restart.
+  //   • enabled, no data >60s  → restart MPXCapture, alert #rpi-reboot-logs (up to 3x,
+  //                              each followed by a 3-minute verify window).
+  //   • still no data after 3  → 🆘 to #rpi-urgent-issue-logs, stop restarting.
+  //   • data returns           → ✅ recovery, reset the budget.
+  const MPX_NODATA_THRESHOLD_MS = 60000;    // 60s of silence = fault
+  const MPX_VERIFY_WAIT_MS = 180000;        // 3 min to confirm a restart worked
+  const MPX_MAX_RESTARTS = 3;
+  const MPX_WATCHDOG_INTERVAL_MS = 30000;
+
+  let mpxRestartAttempts = 0;
+  let mpxEscalated = false;
+  let mpxOffAlertSent = false;
+  let mpxIncidentActive = false;
+  let mpxLastRestartTime = 0;
+
+  // Force-restart the capture pipeline. Killing rec triggers the existing
+  // rec.on('close') → attemptReconnect() → startMPXCapture() path. On Linux the
+  // pipeline is `bash -c "arecord | MPXCapture"`, so we first kill bash's
+  // children — otherwise an orphaned arecord/MPXCapture keeps the audio device
+  // busy and the respawn fails, defeating the restart.
+  function forceRestartMpx() {
+    try {
+      if (rec && rec.pid && !rec.killed) {
+        if (osPlatform !== 'win32') {
+          try { execSync(`pkill -9 -P ${rec.pid}`); } catch (e) { /* no children / pkill absent */ }
+        }
+        rec.kill('SIGKILL');
+      } else {
+        startMPXCapture();
+      }
+    } catch (e) {
+      logError('[MPX][watchdog] restart error:', e.message);
+    }
+  }
+
+  function mpxDiagnostics() {
+    const mode = MPX_MODE;
+    const running = !!(rec && !rec.killed);
+    const card = (MPX_INPUT_CARD && MPX_INPUT_CARD !== '') ? MPX_INPUT_CARD : (targetDevice || 'default');
+    const summary = `mode=${mode} | capture=${running ? 'running' : 'not running'} | card=${card}`;
+    let likelyCause;
+    if (!running) {
+      likelyCause = 'MPXCapture process is not running — binary/audio pipeline failed to start.';
+    } else {
+      likelyCause = 'MPXCapture is running but emitting no frames — audio input device silent/busy or arecord stalled.';
+    }
+    return { summary, likelyCause };
+  }
+
+  setInterval(() => {
+    const now = Date.now();
+
+    // Data liveness is the primary signal. MPXCapture can run (and produce
+    // data) even with MPXmode="off" when an input card is configured, so we
+    // must NOT alert on mode alone — only when charts are actually starved.
+    const dataFresh = (now - lastMpxLineTime) <= MPX_NODATA_THRESHOLD_MS;
+
+    if (dataFresh) {
+      // Healthy — clear any active incident and re-arm the one-shot flags.
+      if (mpxIncidentActive) {
+        const wasEscalated = mpxEscalated;
+        logInfo('[MPX][watchdog] MPX data flowing again — incident cleared.');
+        sendSlackNotification(
+          wasEscalated ? 'mpx_recovered_after_escalation' : 'mpx_recovered',
+          {}, new Date().toISOString()
+        );
+        mpxIncidentActive = false;
+        mpxEscalated = false;
+        mpxRestartAttempts = 0;
+        mpxLastRestartTime = 0;
+      }
+      mpxOffAlertSent = false;
+      return;
+    }
+
+    // No data AND MPX is turned off → that is the cause. Alert once, do not
+    // restart (a restart cannot fix an intentional "off"); enabling MPX will.
+    if (MPX_MODE === 'off') {
+      if (!mpxOffAlertSent) {
+        mpxOffAlertSent = true;
+        logWarn('[MPX][watchdog] No MPX data and MPXmode is off — sending enable reminder.');
+        sendSlackNotification('mpx_disabled', {}, new Date().toISOString());
+      }
+      return;
+    }
+
+    // No data, MPX enabled. Already escalated → stay halted, no spam.
+    if (mpxEscalated) {
+      return;
+    }
+
+    // Give the last restart its 3-minute verify window before acting again.
+    if (mpxLastRestartTime && (now - mpxLastRestartTime) < MPX_VERIFY_WAIT_MS) {
+      return;
+    }
+
+    mpxIncidentActive = true;
+
+    if (mpxRestartAttempts < MPX_MAX_RESTARTS) {
+      mpxRestartAttempts += 1;
+      mpxLastRestartTime = now;
+      logWarn(`[MPX][watchdog] No MPX data for >${MPX_NODATA_THRESHOLD_MS / 1000}s — restarting MPX (attempt ${mpxRestartAttempts}/${MPX_MAX_RESTARTS}).`);
+      sendSlackNotification('mpx_restart', {
+        attempts: mpxRestartAttempts,
+        maxAttempts: MPX_MAX_RESTARTS,
+        threshold: MPX_NODATA_THRESHOLD_MS / 1000
+      }, new Date().toISOString());
+      forceRestartMpx();
+    } else {
+      mpxEscalated = true;
+      const diag = mpxDiagnostics();
+      logError(`[MPX][watchdog] MPX still dead after ${mpxRestartAttempts} restarts — escalating. ${diag.summary}`);
+      sendSlackNotification('mpx_failed', {
+        attempts: mpxRestartAttempts,
+        diagnostics: diag.summary,
+        likelyCause: diag.likelyCause
+      }, new Date().toISOString());
+    }
+  }, MPX_WATCHDOG_INTERVAL_MS);
 
   // ====================================================================================
   //  Spectrum Activity Watchdog (Optimized CPU) - UDP VERSION
