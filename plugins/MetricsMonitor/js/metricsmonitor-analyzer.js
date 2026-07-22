@@ -74,7 +74,11 @@ const MpxHub = (() => {
         let msg;
         try { msg = JSON.parse(evt.data); } catch { return; }
         if (!msg || typeof msg !== "object" || msg.type !== "MPX") return;
-		
+
+        if (window.MetricsMonitor && typeof window.MetricsMonitor.reportMpxData === "function") {
+          window.MetricsMonitor.reportMpxData();
+        }
+
         // Pass the entire message (spectrum only used here)
         listeners.forEach(fn => {
           try { fn(msg); } catch (e) { /* ignore */ }
