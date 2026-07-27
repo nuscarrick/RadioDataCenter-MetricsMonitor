@@ -51,13 +51,13 @@ const MeterTiltCalibration = -900;    // Do not touch - this value is automatica
   const updateInfo = false;
 
   const plugin_name = "MetricsMonitor";
-  const plugin_path = "https://raw.githubusercontent.com/nuscarrick/MetricsMonitor/";
+  const plugin_path = "https://raw.githubusercontent.com/nuscarrick/RadioDataCenter-MetricsMonitor/";
   const plugin_JSfile = "main/plugins/MetricsMonitor/metricsmonitor.js";
 
   const CHECK_FOR_UPDATES = updateInfo;
   const pluginSetupOnlyNotify = true;
   const pluginName = plugin_name;
-  const pluginHomepageUrl = "https://github.com/nuscarrick/MetricsMonitor/releases";
+  const pluginHomepageUrl = "https://github.com/nuscarrick/RadioDataCenter-MetricsMonitor/releases";
   const pluginUpdateUrl = plugin_path + plugin_JSfile;
 
   const CONFIG = {
