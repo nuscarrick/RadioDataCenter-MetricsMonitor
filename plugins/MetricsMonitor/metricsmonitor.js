@@ -790,6 +790,29 @@ function syncTextWebSocketMode(isInitial) {
     }
   }
 
+  // The MPX panels have a fixed internal layout, but the slot they sit in is
+  // sized by the page. Button Presets shrinks it — at max-height: 860px it
+  // forces the surrounding panels to 80px/120px — and the panel then overflows
+  // its container top and bottom, clipping the meter scale along the top edge.
+  //
+  // Measure what the panel actually needs and grow the slot to match. Only ever
+  // grows, so it cannot make an already-correct layout worse.
+  function fitCanvasContainerToPanel() {
+    const canvasContainer = document.querySelector(".canvas-container.hide-phone");
+    if (!canvasContainer) return;
+
+    const panel =
+      document.getElementById("mm-mpx-combo-flex") ||
+      document.getElementById("mm-signal-analyzer-flex") ||
+      document.getElementById("mm-scope-flex");
+
+    if (!panel || getComputedStyle(panel).display === "none") return;
+
+    const needed = Math.ceil(panel.getBoundingClientRect().height);
+    const available = Math.ceil(canvasContainer.getBoundingClientRect().height);
+    if (needed > available) canvasContainer.style.minHeight = needed + "px";
+  }
+
   function resetContainerStyles() {
     const canvasContainer = document.querySelector(".canvas-container.hide-phone");
     if (!canvasContainer) return;
@@ -800,7 +823,17 @@ function syncTextWebSocketMode(isInitial) {
     canvasContainer.style.marginLeft = "";
     canvasContainer.style.marginRight = "";
     canvasContainer.style.width = "";
+    canvasContainer.style.minHeight = "";
   }
+
+  // Button Presets' overrides are keyed on max-height: 860px, so crossing that
+  // threshold resizes the slot while the panel is already open.
+  window.addEventListener("resize", () => {
+    if (!isCanvasVisible) return;
+    const cc = document.querySelector(".canvas-container.hide-phone");
+    if (cc) cc.style.minHeight = "";
+    requestAnimationFrame(() => requestAnimationFrame(fitCanvasContainerToPanel));
+  });
 
   function toggleMpxSignalCanvas() {
     const logger = getRdsLoggerState();
@@ -836,6 +869,9 @@ function syncTextWebSocketMode(isInitial) {
       if (activeCanvasMode === 2 && mmContainerCombo)  { mmContainerCombo.style.display = "flex";  if(window.mmTriggerResize) window.mmTriggerResize(); }
       if (activeCanvasMode === 4 && mmContainerSignal) { mmContainerSignal.style.display = "flex"; if(window.mmTriggerResizeSignal) window.mmTriggerResizeSignal(); }
       if (activeCanvasMode === 5 && mmContainerScope)  { mmContainerScope.style.display = "flex";  if(window.mmTriggerResizeScope) window.mmTriggerResizeScope(); }
+
+      // After layout settles, so the panel reports its real height.
+      requestAnimationFrame(() => requestAnimationFrame(fitCanvasContainerToPanel));
 
       syncTextWebSocketMode(false);
     } else {
