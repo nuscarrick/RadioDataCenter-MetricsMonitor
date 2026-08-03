@@ -826,6 +826,31 @@ function syncTextWebSocketMode(isInitial) {
     const needed = Math.ceil(panel.getBoundingClientRect().height);
     const available = Math.ceil(canvasContainer.getBoundingClientRect().height);
     if (needed > available) canvasContainer.style.minHeight = needed + "px";
+
+    clampPanelUpwardBleed(canvasContainer, panel);
+  }
+
+  // The panel styles carry `transform: translate(10px, -10px)` with
+  // `margin-bottom: -20px`, so it deliberately bleeds 10px past the slot at
+  // each end while the layout flow ignores it. That looks right when there is
+  // space above, but once the slot starts level with the content wrapper the
+  // upward bleed lands under the site header and takes the meter scale with it.
+  //
+  // Keep the design where it fits and give back only as much lift as there is
+  // room for. Horizontal offset is left alone; only the vertical is clamped.
+  const PANEL_LIFT_PX = 10;
+
+  function clampPanelUpwardBleed(canvasContainer, panel) {
+    const wrapper = canvasContainer.closest("#wrapper") || canvasContainer.parentElement;
+    if (!wrapper) return;
+
+    const roomAbove = Math.floor(
+      canvasContainer.getBoundingClientRect().top - wrapper.getBoundingClientRect().top
+    );
+    const lift = Math.max(0, Math.min(PANEL_LIFT_PX, roomAbove));
+
+    panel.style.transform =
+      lift === PANEL_LIFT_PX ? "" : `translate(10px, -${lift}px)`;
   }
 
   function resetContainerStyles() {
@@ -839,6 +864,11 @@ function syncTextWebSocketMode(isInitial) {
     canvasContainer.style.marginRight = "";
     canvasContainer.style.width = "";
     canvasContainer.style.minHeight = "";
+
+    ["mm-mpx-combo-flex", "mm-signal-analyzer-flex", "mm-scope-flex"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.style.transform = "";
+    });
   }
 
   // Button Presets' overrides are keyed on max-height: 860px, so crossing that
