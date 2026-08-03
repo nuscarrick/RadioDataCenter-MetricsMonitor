@@ -151,6 +151,15 @@ let _heartbeatInterval = null;
 function checkHeartbeatStatus() {
   const hasInstances = __instances.size > 0;
 
+    // Tell the stale-data watchdog in metricsmonitor.js whether MPX frames
+    // are expected at all. With no instance we send no heartbeat, so the
+    // server stops emitting and silence is correct rather than a fault.
+    if (window.MetricsMonitor) {
+      window.MetricsMonitor.__scopeWants = hasInstances;
+      window.MetricsMonitor.mpxDataExpected =
+        !!(window.MetricsMonitor.__spectrumWants || window.MetricsMonitor.__scopeWants);
+    }
+
   if (hasInstances && !_heartbeatInterval) {
     MpxHub.send({ type: "MPX", cmd: "scope_heartbeat" });
     _heartbeatInterval = setInterval(() => {
