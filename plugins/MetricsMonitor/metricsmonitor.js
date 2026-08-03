@@ -206,6 +206,13 @@ const MeterTiltCalibration = -900;    // Do not touch - this value is automatica
   let lastMpxClientDataTime = Date.now();
   let mpxClientStaleToastShown = false;
 
+  // Set by the analyzer and scope modules while they hold a live instance.
+  // Both send a heartbeat every 2s and the server only emits frames while one
+  // arrived in the last 4s, so with every MPX panel closed the frames stop by
+  // design. Without this gate the watchdog reads that silence as a fault and
+  // fires while MPX is perfectly healthy.
+  window.MetricsMonitor.mpxDataExpected = false;
+
   window.MetricsMonitor.reportMpxData = function () {
     lastMpxClientDataTime = Date.now();
     mpxClientStaleToastShown = false;
@@ -213,6 +220,14 @@ const MeterTiltCalibration = -900;    // Do not touch - this value is automatica
 
   setInterval(() => {
     if (MPXmode === "off") return; // intentionally disabled — not a connection problem
+
+    // Nobody is asking for frames, so their absence means nothing. Keep the
+    // clock fresh so reopening a panel doesn't immediately look stale.
+    if (!window.MetricsMonitor.mpxDataExpected) {
+      lastMpxClientDataTime = Date.now();
+      return;
+    }
+
     if (mpxClientStaleToastShown) return;
     if (Date.now() - lastMpxClientDataTime <= MPX_CLIENT_STALE_THRESHOLD_MS) return;
 
