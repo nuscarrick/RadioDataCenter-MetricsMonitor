@@ -35,6 +35,16 @@ const dgram = require("dgram"); // Required for UDP communication
 const { logInfo, logError, logWarn } = require("./../../server/console");
 const mainConfig = require("./../../config.json");
 
+// Optional: older webservers have no Slack helper. Losing the alert is bad;
+// taking MPX down with a failed require would be far worse, so degrade to a
+// no-op rather than throwing at load time.
+let sendSlackNotification = () => {};
+try {
+  ({ sendSlackNotification } = require("./../../server/helpers/slack_notifications"));
+} catch (err) {
+  logWarn("[MPX] Slack helper unavailable, watchdog alerts disabled:", err.message);
+}
+
 // ====================================================================================
 //  PLUGIN CONFIGURATION MANAGEMENT
 //  Handles loading, validating, and normalizing the 'metricsmonitor.json' config file.
@@ -1402,18 +1412,37 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
   let retryAttempts = 0;
   const RECONNECT_MAX_RETRIES = 30;
   const RECONNECT_RETRY_DELAY = 15;
+  // Once the fast retries are exhausted the fault needs a human, but the device
+  // is unattended, so we keep trying on a slow cadence instead of stopping for
+  // good. A transient fault (USB re-enumeration, card busy) then clears itself
+  // and reports back rather than leaving the tuner dark until someone visits.
+  const ESCALATED_RETRY_DELAY = 600;
+  // Time MPXCapture must stay up before we treat it as genuinely recovered.
+  const RECOVERY_CONFIRM_DELAY = 45;
+  // True between the mpx_failed alert and the recovery that resolves it, so
+  // each incident produces exactly one alert and one all-clear.
+  let escalated = false;
 
   function attemptReconnect() {
-      if (retryAttempts >= RECONNECT_MAX_RETRIES) {
-          logError("[MPX] Maximum retry attempts reached. MPXCapture will not restart.");
-          return;
+      const exhausted = retryAttempts >= RECONNECT_MAX_RETRIES;
+
+      if (exhausted && !escalated) {
+          escalated = true;
+          logError(
+              `[MPX] Maximum retry attempts reached. Falling back to a retry every ${ESCALATED_RETRY_DELAY} seconds.`
+          );
+          sendSlackNotification(
+              "mpx_failed",
+              { attempts: retryAttempts, retryDelay: ESCALATED_RETRY_DELAY },
+              new Date().toLocaleString()
+          );
       }
 
-      retryAttempts += 1;
+      if (!exhausted) retryAttempts += 1;
 
-      logInfo(
-          `[MPX] Waiting for ${RECONNECT_RETRY_DELAY} seconds before attempting to reconnect...`
-      );
+      const delay = exhausted ? ESCALATED_RETRY_DELAY : RECONNECT_RETRY_DELAY;
+
+      logInfo(`[MPX] Waiting for ${delay} seconds before attempting to reconnect...`);
 
       if (retryTimeout) clearTimeout(retryTimeout);
       if (resetTimeout) clearTimeout(resetTimeout);
@@ -1423,8 +1452,17 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
 
           resetTimeout = setTimeout(() => {
               retryAttempts = 0;
-          }, (RECONNECT_RETRY_DELAY * 1000) + (30 * 1000));
-      }, RECONNECT_RETRY_DELAY * 1000);
+              if (escalated) {
+                  escalated = false;
+                  logInfo("[MPX] Recovered after escalation.");
+                  sendSlackNotification(
+                      "mpx_recovered_after_escalation",
+                      {},
+                      new Date().toLocaleString()
+                  );
+              }
+          }, RECOVERY_CONFIRM_DELAY * 1000);
+      }, delay * 1000);
   }
 
   function startMPXCapture() {
