@@ -47,17 +47,17 @@ const PeakMode = "dynamic";    // Do not touch - this value is automatically upd
 const PeakColorFixed = "rgb(251, 174, 38)";    // Do not touch - this value is automatically updated via the config file
 const MeterTiltCalibration = -900;    // Do not touch - this value is automatically updated via the config file
 
-  const plugin_version = "2.7";
+  const plugin_version = "1.0";
   const updateInfo = false;
 
   const plugin_name = "MetricsMonitor";
-  const plugin_path = "https://raw.githubusercontent.com/Highpoint2000/MetricsMonitor/";
+  const plugin_path = "https://raw.githubusercontent.com/nuscarrick/RadioDataCenter-MetricsMonitor/";
   const plugin_JSfile = "main/plugins/MetricsMonitor/metricsmonitor.js";
 
   const CHECK_FOR_UPDATES = updateInfo;
   const pluginSetupOnlyNotify = true;
   const pluginName = plugin_name;
-  const pluginHomepageUrl = "https://github.com/Highpoint2000/MetricsMonitor/releases";
+  const pluginHomepageUrl = "https://github.com/nuscarrick/RadioDataCenter-MetricsMonitor/releases";
   const pluginUpdateUrl = plugin_path + plugin_JSfile;
 
   const CONFIG = {
