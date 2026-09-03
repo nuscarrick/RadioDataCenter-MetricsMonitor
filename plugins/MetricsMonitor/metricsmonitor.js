@@ -86,13 +86,10 @@ const MeterTiltCalibration = -900;    // Do not touch - this value is automatica
       const bodyText = document.body.textContent || document.body.innerText;
       // Match against the translated strings, not literal English — otherwise
       // this check silently fails whenever the UI language is not English.
-      // Both spellings of "administrator" are kept because the core UI string
-      // menu.loggedAsAdmin carries the typo, and that is what actually renders.
       const translate = (key, fallback) => (typeof t === 'function' ? t(key) : fallback);
       const isAdminLoggedIn =
           bodyText.includes(translate('plugin.loggedInAsAdministrator', 'You are logged in as an administrator.')) ||
-          bodyText.includes(translate('plugin.loggedInAsAdminstrator', 'You are logged in as an adminstrator.')) ||
-          bodyText.includes(translate('menu.loggedAsAdmin', 'You are logged in as an adminstrator'));
+          bodyText.includes(translate('menu.loggedAsAdmin', 'You are logged in as an administrator'));
       const canControlReceiver =
           bodyText.includes(translate('plugin.loggedInCanControlReceiver', 'You are logged in and can control the receiver.'));
       isTuneAuthenticated = !!(isAdminLoggedIn || canControlReceiver);
