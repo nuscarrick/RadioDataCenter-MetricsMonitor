@@ -85,8 +85,7 @@ const MeterTiltCalibration = -900;    // Do not touch - this value is automatica
       if (!CONFIG.EnableAnalyzerAdminMode) { isTuneAuthenticated = true; return; }
       const bodyText = document.body.textContent || document.body.innerText;
       const isAdminLoggedIn =
-          bodyText.includes(t('plugin.loggedInAsAdministrator')) ||
-          bodyText.includes(t('plugin.loggedInAsAdminstrator'));
+          bodyText.includes(t('plugin.loggedInAsAdministrator'));
       const canControlReceiver =
           bodyText.includes(t('plugin.loggedInCanControlReceiver'));
       isTuneAuthenticated = !!(isAdminLoggedIn || canControlReceiver);
