@@ -578,13 +578,19 @@ function patchHelpersForLocalhostBypass() {
 
     const insertion = `
   ${LOCALHOST_PATCH_MARKER} allow internal server apps on localhost
-  const isLocalhost =
-    clientIp === "127.0.0.1" ||
-    clientIp === "::1" ||
-    clientIp === "::ffff:127.0.0.1" ||
-    (clientIp && clientIp.replace(/^::ffff:/, '') === "127.0.0.1");
+  // Keyed on the TCP peer address as well as clientIp, and both must be
+  // loopback. clientIp starts as the X-Forwarded-For header, which any caller
+  // can set, so testing it alone would let a remote client disable its own
+  // rate limiting with "X-Forwarded-For: 127.0.0.1". The socket address cannot
+  // be forged but is not sufficient either: behind a same-host reverse proxy
+  // every visitor arrives from loopback, and those carry an X-Forwarded-For,
+  // which makes clientIp non-local.
+  const mmIsLoopback = function (addr) {
+    if (typeof addr !== "string" || addr === "") return false;
+    return addr === "::1" || addr.replace(/^::ffff:/, "") === "127.0.0.1";
+  };
 
-  if (isLocalhost) {
+  if (mmIsLoopback(ws && ws._socket && ws._socket.remoteAddress) && mmIsLoopback(clientIp)) {
     // no spam/bot checks for local server applications
     return command;
   }`;
