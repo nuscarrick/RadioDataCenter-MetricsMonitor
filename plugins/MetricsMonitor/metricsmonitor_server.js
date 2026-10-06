@@ -1380,6 +1380,8 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
       childProcess.rl = rl; // Keep reference to close later if needed
 
       rl.on('line', (line) => {
+      lastLineAt = Date.now();
+      noDataRestartCount = 0;
           try {
               const trimmed = line.trim();
               if (!trimmed.startsWith('{')) return;
@@ -1425,6 +1427,54 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
   const ESCALATED_RETRY_DELAY = 600;
   // Time MPXCapture must stay up before we treat it as genuinely recovered.
   const RECOVERY_CONFIRM_DELAY = 45;
+  const NO_DATA_THRESHOLD_MS = 60 * 1000;
+  const NO_DATA_CHECK_INTERVAL_MS = 5 * 1000;
+  const NO_DATA_MAX_RESTARTS = 3;
+  let lastLineAt = Date.now();
+  let noDataCheckInterval = null;
+  let noDataRestartCount = 0;
+  let selfKilled = false;
+
+  function clearNoDataWatch() {
+    if (noDataCheckInterval) clearInterval(noDataCheckInterval);
+    noDataCheckInterval = null;
+  }
+
+  function killCaptureGroup(signal) {
+    if (!rec || !rec.pid || rec.exitCode !== null || rec.signalCode !== null) return;
+    selfKilled = true;
+    try {
+      // Windows capture is a direct child; POSIX capture owns a pipeline group.
+      if (osPlatform === "win32") process.kill(rec.pid, signal);
+      else process.kill(-rec.pid, signal);
+    } catch (error) {
+      if (error.code !== "ESRCH") logError("[MPX] Capture termination failed:", error.message);
+    }
+  }
+
+  function armNoDataWatch() {
+    clearNoDataWatch();
+    lastLineAt = Date.now();
+    noDataCheckInterval = setInterval(() => {
+      if (!rec || rec.exitCode !== null || rec.signalCode !== null) return;
+      if (!(ENABLE_MPX || MPX_INPUT_CARD !== "")) return;
+      if (!(MPX_MODE !== "off" || MPX_INPUT_CARD !== "")) return;
+      if (Date.now() - lastLineAt <= NO_DATA_THRESHOLD_MS) return;
+      clearNoDataWatch();
+      noDataRestartCount++;
+      sendSlackNotification(
+        "mpx_restart",
+        { threshold: NO_DATA_THRESHOLD_MS / 1000, attempts: noDataRestartCount, maxAttempts: NO_DATA_MAX_RESTARTS },
+        new Date().toLocaleString("en-GB", { timeZone: "Europe/Istanbul" })
+      );
+      killCaptureGroup("SIGKILL");
+    }, NO_DATA_CHECK_INTERVAL_MS);
+  }
+
+  process.on("exit", () => {
+    clearNoDataWatch();
+    killCaptureGroup("SIGKILL");
+  });
   // True between the mpx_failed alert and the recovery that resolves it, so
   // each incident produces exactly one alert and one all-clear.
   let escalated = false;
@@ -1484,7 +1534,8 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
           targetDevice = "Default";
       }
 
-      if (MPX_MODE !== "off" || (MPX_MODE === "off" && MPX_INPUT_CARD !== "")) {
+      if ((ENABLE_MPX || MPX_INPUT_CARD !== "") &&
+          (MPX_MODE !== "off" || MPX_INPUT_CARD !== "")) {
         
         logInfo(`[MPX] Starting MPXCapture (Hybrid Mode)`);
 
@@ -1543,6 +1594,7 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
               ${SAMPLE_RATE} "s32" ${FFT_SIZE} "${escapedConfigPath}" ${UDP_CONTROL_PORT}
           `], {
             stdio: ["ignore", "pipe", "pipe"],
+            detached: true,
             env: { ...process.env, ALSA_CARD: "sndrpihifiberry" }
           });
 
@@ -1557,10 +1609,12 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
         });
 
         setupJsonReader(rec);
+        armNoDataWatch();
 
         rec.on("close", (code) => {
             logInfo("[MPX] MPXCapture exited with code:", code);
             if (rec && rec.rl) rec.rl.close(); // Clean up readline memory
+            clearNoDataWatch();
             attemptReconnect();
         });
     }
