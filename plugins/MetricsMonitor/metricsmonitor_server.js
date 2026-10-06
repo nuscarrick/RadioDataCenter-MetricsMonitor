@@ -1380,13 +1380,16 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
       childProcess.rl = rl; // Keep reference to close later if needed
 
       rl.on('line', (line) => {
-      lastLineAt = Date.now();
-      noDataRestartCount = 0;
+          lastLineAt = Date.now();
+          noDataRestartCount = 0;
           try {
               const trimmed = line.trim();
               if (!trimmed.startsWith('{')) return;
               
               const data = JSON.parse(trimmed);
+              if (data && [data.p, data.r, data.m].some(Number.isFinite)) {
+                  recordValidMpxFrame(childProcess);
+              }
               
               if (typeof data.p === 'number') currentPilotPeak = data.p;
               if (typeof data.r === 'number') currentRdsPeak = data.r;
@@ -1433,6 +1436,7 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
   let lastLineAt = Date.now();
   let noDataCheckInterval = null;
   let noDataRestartCount = 0;
+  let lastValidFrameAt = null;
   let selfKilled = false;
 
   function clearNoDataWatch() {
@@ -1455,6 +1459,7 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
   function armNoDataWatch() {
     clearNoDataWatch();
     lastLineAt = Date.now();
+    lastValidFrameAt = null;
     noDataCheckInterval = setInterval(() => {
       if (!rec || rec.exitCode !== null || rec.signalCode !== null) return;
       if (!(ENABLE_MPX || MPX_INPUT_CARD !== "")) return;
@@ -1462,11 +1467,24 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
       if (Date.now() - lastLineAt <= NO_DATA_THRESHOLD_MS) return;
       clearNoDataWatch();
       noDataRestartCount++;
-      sendSlackNotification(
-        "mpx_restart",
-        { threshold: NO_DATA_THRESHOLD_MS / 1000, attempts: noDataRestartCount, maxAttempts: NO_DATA_MAX_RESTARTS },
-        new Date().toLocaleString("en-GB", { timeZone: "Europe/Istanbul" })
-      );
+      if (noDataRestartCount >= NO_DATA_MAX_RESTARTS || escalated) {
+        retryAttempts = RECONNECT_MAX_RETRIES;
+        if (!escalated) {
+          escalated = true;
+          logError("[MPX] No-data restart limit reached; switching to slow retries.");
+          sendSlackNotification(
+            "mpx_failed",
+            { attempts: noDataRestartCount, retryDelay: ESCALATED_RETRY_DELAY },
+            new Date().toLocaleString()
+          );
+        }
+      } else {
+        sendSlackNotification(
+          "mpx_restart",
+          { threshold: NO_DATA_THRESHOLD_MS / 1000, attempts: noDataRestartCount, maxAttempts: NO_DATA_MAX_RESTARTS },
+          new Date().toLocaleString()
+        );
+      }
       killCaptureGroup("SIGKILL");
     }, NO_DATA_CHECK_INTERVAL_MS);
   }
@@ -1478,6 +1496,36 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
   // True between the mpx_failed alert and the recovery that resolves it, so
   // each incident produces exactly one alert and one all-clear.
   let escalated = false;
+
+  function recordValidMpxFrame(capture) {
+      if (capture !== rec || rec.exitCode !== null || rec.signalCode !== null) return;
+      const now = Date.now();
+      if (lastValidFrameAt === null || now - lastValidFrameAt > NO_DATA_CHECK_INTERVAL_MS) {
+          if (resetTimeout) clearTimeout(resetTimeout);
+          resetTimeout = null;
+      }
+      lastValidFrameAt = now;
+      if (!(ENABLE_MPX || MPX_INPUT_CARD !== "") ||
+          !(MPX_MODE !== "off" || MPX_INPUT_CARD !== "")) return;
+      if (resetTimeout || (!escalated && retryAttempts === 0)) return;
+      resetTimeout = setTimeout(() => {
+          resetTimeout = null;
+          if (capture !== rec || rec.exitCode !== null || rec.signalCode !== null) return;
+          if (!(ENABLE_MPX || MPX_INPUT_CARD !== "") ||
+              !(MPX_MODE !== "off" || MPX_INPUT_CARD !== "")) return;
+          if (lastValidFrameAt === null || Date.now() - lastValidFrameAt > NO_DATA_CHECK_INTERVAL_MS) return;
+          retryAttempts = 0;
+          if (escalated) {
+              escalated = false;
+              logInfo("[MPX] Recovered after escalation with confirmed MPX data.");
+              sendSlackNotification(
+                  "mpx_recovered_after_escalation",
+                  {},
+                  new Date().toLocaleString()
+              );
+          }
+      }, RECOVERY_CONFIRM_DELAY * 1000);
+  }
 
   function attemptReconnect() {
       const exhausted = retryAttempts >= RECONNECT_MAX_RETRIES;
@@ -1504,20 +1552,8 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
       if (resetTimeout) clearTimeout(resetTimeout);
 
       retryTimeout = setTimeout(() => {
+          retryTimeout = null;
           startMPXCapture();
-
-          resetTimeout = setTimeout(() => {
-              retryAttempts = 0;
-              if (escalated) {
-                  escalated = false;
-                  logInfo("[MPX] Recovered after escalation.");
-                  sendSlackNotification(
-                      "mpx_recovered_after_escalation",
-                      {},
-                      new Date().toLocaleString()
-                  );
-              }
-          }, RECOVERY_CONFIRM_DELAY * 1000);
       }, delay * 1000);
   }
 
@@ -1615,6 +1651,9 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
             logInfo("[MPX] MPXCapture exited with code:", code);
             if (rec && rec.rl) rec.rl.close(); // Clean up readline memory
             clearNoDataWatch();
+            if (resetTimeout) clearTimeout(resetTimeout);
+            resetTimeout = null;
+            lastValidFrameAt = null;
             attemptReconnect();
         });
     }
