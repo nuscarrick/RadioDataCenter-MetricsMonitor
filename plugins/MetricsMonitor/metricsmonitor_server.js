@@ -1380,11 +1380,16 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
       childProcess.rl = rl; // Keep reference to close later if needed
 
       rl.on('line', (line) => {
+          lastLineAt = Date.now();
+          noDataRestartCount = 0;
           try {
               const trimmed = line.trim();
               if (!trimmed.startsWith('{')) return;
               
               const data = JSON.parse(trimmed);
+              if (data && [data.p, data.r, data.m].some(Number.isFinite)) {
+                  recordValidMpxFrame(childProcess);
+              }
               
               if (typeof data.p === 'number') currentPilotPeak = data.p;
               if (typeof data.r === 'number') currentRdsPeak = data.r;
@@ -1425,9 +1430,135 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
   const ESCALATED_RETRY_DELAY = 600;
   // Time MPXCapture must stay up before we treat it as genuinely recovered.
   const RECOVERY_CONFIRM_DELAY = 45;
+  const NO_DATA_THRESHOLD_MS = 60 * 1000;
+  const NO_DATA_CHECK_INTERVAL_MS = 5 * 1000;
+  const NO_DATA_MAX_RESTARTS = 3;
+  const FLAP_WINDOW_MS = 30 * 60 * 1000;
+  const FLAP_THRESHOLD = 5;
+  // 6.7 times normal recovery confirmation; one sixth of the flap window.
+  const FLAP_RESET_CONFIRM_DELAY = 300;
+  let mpxExitTimestamps = [];
+  let flapResetTimeout = null;
+  let lastLineAt = Date.now();
+  let noDataCheckInterval = null;
+  let noDataRestartCount = 0;
+  let lastValidFrameAt = null;
+  let selfKilled = false;
+
+  function clearNoDataWatch() {
+    if (noDataCheckInterval) clearInterval(noDataCheckInterval);
+    noDataCheckInterval = null;
+  }
+
+  function killCaptureGroup(signal) {
+    if (!rec || !rec.pid || rec.exitCode !== null || rec.signalCode !== null) return;
+    const previousSelfKilled = selfKilled;
+    selfKilled = true;
+    try {
+      // Windows capture is a direct child; POSIX capture owns a pipeline group.
+      if (osPlatform === "win32") process.kill(rec.pid, signal);
+      else process.kill(-rec.pid, signal);
+    } catch (error) {
+      // A failed signal cannot turn a later organic exit into a deliberate kill.
+      selfKilled = previousSelfKilled;
+      if (error.code !== "ESRCH") logError("[MPX] Capture termination failed:", error.message);
+    }
+  }
+
+  function armNoDataWatch() {
+    clearNoDataWatch();
+    lastLineAt = Date.now();
+    lastValidFrameAt = null;
+    noDataCheckInterval = setInterval(() => {
+      if (!rec || rec.exitCode !== null || rec.signalCode !== null) return;
+      if (!(ENABLE_MPX || MPX_INPUT_CARD !== "")) return;
+      if (!(MPX_MODE !== "off" || MPX_INPUT_CARD !== "")) return;
+      if (Date.now() - lastLineAt <= NO_DATA_THRESHOLD_MS) return;
+      clearNoDataWatch();
+      noDataRestartCount++;
+      if (noDataRestartCount >= NO_DATA_MAX_RESTARTS || escalated) {
+        retryAttempts = RECONNECT_MAX_RETRIES;
+        if (!escalated) {
+          escalated = true;
+          logError("[MPX] No-data restart limit reached; switching to slow retries.");
+          sendSlackNotification(
+            "mpx_failed",
+            { attempts: noDataRestartCount, retryDelay: ESCALATED_RETRY_DELAY },
+            new Date().toLocaleString()
+          );
+        }
+      } else {
+        sendSlackNotification(
+          "mpx_restart",
+          { threshold: NO_DATA_THRESHOLD_MS / 1000, attempts: noDataRestartCount, maxAttempts: NO_DATA_MAX_RESTARTS },
+          new Date().toLocaleString()
+        );
+      }
+      killCaptureGroup("SIGKILL");
+    }, NO_DATA_CHECK_INTERVAL_MS);
+  }
+
+  process.on("exit", () => {
+    clearNoDataWatch();
+    if (flapResetTimeout) clearTimeout(flapResetTimeout);
+    killCaptureGroup("SIGKILL");
+  });
   // True between the mpx_failed alert and the recovery that resolves it, so
   // each incident produces exactly one alert and one all-clear.
   let escalated = false;
+
+  function recordValidMpxFrame(capture) {
+      if (capture !== rec || rec.exitCode !== null || rec.signalCode !== null) return;
+      const now = Date.now();
+      if (lastValidFrameAt === null || now - lastValidFrameAt > NO_DATA_CHECK_INTERVAL_MS) {
+          if (resetTimeout) clearTimeout(resetTimeout);
+          resetTimeout = null;
+          if (flapResetTimeout) clearTimeout(flapResetTimeout);
+          flapResetTimeout = null;
+      }
+      lastValidFrameAt = now;
+      if (!(ENABLE_MPX || MPX_INPUT_CARD !== "") ||
+          !(MPX_MODE !== "off" || MPX_INPUT_CARD !== "")) return;
+      // Start the longer confirmation from actual data, never mere uptime.
+      // A stale or isolated frame cannot resolve a silent/garbage incident.
+      if (!flapResetTimeout) {
+          flapResetTimeout = setTimeout(() => {
+              flapResetTimeout = null;
+              if (capture !== rec || rec.exitCode !== null || rec.signalCode !== null) return;
+              if (!(ENABLE_MPX || MPX_INPUT_CARD !== "") ||
+                  !(MPX_MODE !== "off" || MPX_INPUT_CARD !== "")) return;
+              if (lastValidFrameAt === null || Date.now() - lastValidFrameAt > NO_DATA_CHECK_INTERVAL_MS) return;
+              mpxExitTimestamps.length = 0;
+              if (escalated) {
+                  escalated = false;
+                  logInfo("[MPX] Recovered after escalation with sustained MPX data; flap window cleared.");
+                  sendSlackNotification(
+                      "mpx_recovered_after_escalation",
+                      {},
+                      new Date().toLocaleString()
+                  );
+              }
+          }, FLAP_RESET_CONFIRM_DELAY * 1000);
+      }
+      if (resetTimeout || (!escalated && retryAttempts === 0)) return;
+      resetTimeout = setTimeout(() => {
+          resetTimeout = null;
+          if (capture !== rec || rec.exitCode !== null || rec.signalCode !== null) return;
+          if (!(ENABLE_MPX || MPX_INPUT_CARD !== "") ||
+              !(MPX_MODE !== "off" || MPX_INPUT_CARD !== "")) return;
+          if (lastValidFrameAt === null || Date.now() - lastValidFrameAt > NO_DATA_CHECK_INTERVAL_MS) return;
+          retryAttempts = 0;
+          if (escalated && mpxExitTimestamps.length < FLAP_THRESHOLD) {
+              escalated = false;
+              logInfo("[MPX] Recovered after escalation with confirmed MPX data.");
+              sendSlackNotification(
+                  "mpx_recovered_after_escalation",
+                  {},
+                  new Date().toLocaleString()
+              );
+          }
+      }, RECOVERY_CONFIRM_DELAY * 1000);
+  }
 
   function attemptReconnect() {
       const exhausted = retryAttempts >= RECONNECT_MAX_RETRIES;
@@ -1454,20 +1585,8 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
       if (resetTimeout) clearTimeout(resetTimeout);
 
       retryTimeout = setTimeout(() => {
+          retryTimeout = null;
           startMPXCapture();
-
-          resetTimeout = setTimeout(() => {
-              retryAttempts = 0;
-              if (escalated) {
-                  escalated = false;
-                  logInfo("[MPX] Recovered after escalation.");
-                  sendSlackNotification(
-                      "mpx_recovered_after_escalation",
-                      {},
-                      new Date().toLocaleString()
-                  );
-              }
-          }, RECOVERY_CONFIRM_DELAY * 1000);
       }, delay * 1000);
   }
 
@@ -1484,7 +1603,8 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
           targetDevice = "Default";
       }
 
-      if (MPX_MODE !== "off" || (MPX_MODE === "off" && MPX_INPUT_CARD !== "")) {
+      if ((ENABLE_MPX || MPX_INPUT_CARD !== "") &&
+          (MPX_MODE !== "off" || MPX_INPUT_CARD !== "")) {
         
         logInfo(`[MPX] Starting MPXCapture (Hybrid Mode)`);
 
@@ -1543,6 +1663,7 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
               ${SAMPLE_RATE} "s32" ${FFT_SIZE} "${escapedConfigPath}" ${UDP_CONTROL_PORT}
           `], {
             stdio: ["ignore", "pipe", "pipe"],
+            detached: true,
             env: { ...process.env, ALSA_CARD: "sndrpihifiberry" }
           });
 
@@ -1557,10 +1678,35 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
         });
 
         setupJsonReader(rec);
+        armNoDataWatch();
 
         rec.on("close", (code) => {
             logInfo("[MPX] MPXCapture exited with code:", code);
             if (rec && rec.rl) rec.rl.close(); // Clean up readline memory
+            clearNoDataWatch();
+            if (resetTimeout) clearTimeout(resetTimeout);
+            resetTimeout = null;
+            if (flapResetTimeout) clearTimeout(flapResetTimeout);
+            flapResetTimeout = null;
+            lastValidFrameAt = null;
+            if (!selfKilled && (ENABLE_MPX || MPX_INPUT_CARD !== "") &&
+                (MPX_MODE !== "off" || MPX_INPUT_CARD !== "")) {
+                const now = Date.now();
+                mpxExitTimestamps.push(now);
+                while (mpxExitTimestamps.length && now - mpxExitTimestamps[0] > FLAP_WINDOW_MS) {
+                    mpxExitTimestamps.shift();
+                }
+                if (mpxExitTimestamps.length >= FLAP_THRESHOLD && !escalated) {
+                    escalated = true;
+                    logError(`[MPX] Flap threshold reached: ${mpxExitTimestamps.length} exits within ${FLAP_WINDOW_MS / 1000}s.`);
+                    sendSlackNotification(
+                        "mpx_failed",
+                        { attempts: mpxExitTimestamps.length, retryDelay: RECONNECT_RETRY_DELAY },
+                        new Date().toLocaleString()
+                    );
+                }
+            }
+            selfKilled = false;
             attemptReconnect();
         });
     }
