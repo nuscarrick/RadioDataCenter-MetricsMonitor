@@ -1366,6 +1366,7 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
   let currentRdsPeak = 0;
   let currentMaxPeak = 0;
   let currentNoiseFloor = 0;
+  let lastCompleteMeterFrameAt = 0;
   
   let latestMpxFrame = null;   // Spectrum (s)
   let latestScopeFrame = null; // Oscilloscope (o)
@@ -1387,6 +1388,9 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
               if (!trimmed.startsWith('{')) return;
               
               const data = JSON.parse(trimmed);
+              if (data && [data.p, data.r, data.m].every(Number.isFinite)) {
+                  lastCompleteMeterFrameAt = Date.now();
+              }
               if (data && [data.p, data.r, data.m].some(Number.isFinite)) {
                   recordValidMpxFrame(childProcess);
               }
@@ -1871,6 +1875,7 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
         peak: out_mpx, 
         pilotKHz: out_pilot, 
         rdsKHz: out_rds,
+        capturedAt: lastCompleteMeterFrameAt,
         pilot: valP, 
         rds: valR, 
         noise: valN, 
