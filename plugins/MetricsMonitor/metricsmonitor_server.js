@@ -1367,6 +1367,13 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
   let currentMaxPeak = 0;
   let currentNoiseFloor = 0;
   let lastCompleteMeterFrameAt = 0;
+  // Optional so this plugin still runs on webservers without Scanner support.
+  let scannerMetrics = null;
+  try {
+      scannerMetrics = require("./../../server/helpers/scannerMetrics");
+  } catch (error) {
+      if (error.code !== "MODULE_NOT_FOUND") throw error;
+  }
   
   let latestMpxFrame = null;   // Spectrum (s)
   let latestScopeFrame = null; // Oscilloscope (o)
@@ -1881,6 +1888,12 @@ if (!ENABLE_MPX && MPX_INPUT_CARD === ""){
         noise: valN, 
         snr: (valN > 1e-6) ? (valP / valN) : 0
       });
+      if (scannerMetrics && lastCompleteMeterFrameAt) {
+          scannerMetrics.observeMpx(
+              { mpx: out_mpx, pilot: out_pilot, rds: out_rds },
+              lastCompleteMeterFrameAt
+          );
+      }
 
       // -----------------------------------------------------------------------
       // SERVER-SIDE AUDIO-VISUAL SYNCHRONIZATION QUEUE
